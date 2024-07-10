@@ -471,7 +471,7 @@ local function completion_handler(_, result, ctx)
       end
 
       if item.documentation and #item.documentation > 0 then
-        -- Expand the infortmation about the Emmet abbreviation
+        -- Expand the information about the Emmet abbreviation
         if item.detail == 'Emmet Abbreviation' then
           entry.info = item.detail .. '\n```' .. lang .. '\n' .. item.documentation .. '\n```'
         else
@@ -527,41 +527,64 @@ local function debounce(client, bufnr, triggerKind, triggerChar)
   end)
 end
 
+-- Aux Function for manage completion
+local function call_completion(bufnr, client)
+  if disable or vim.fn.pumvisible() == 1 then
+    disable = false
+    return
+  end
+  local col = vfn.charcol('.')
+  local line = api.nvim_get_current_line()
+  if col == 0 or #line == 0 then
+    return
+  end
+  local triggerKind = lsp.protocol.CompletionTriggerKind.Invoked
+  local triggerChar = ''
+  local char = line:sub(col - 1, col - 1)
+  local ok, val = pcall(api.nvim_eval, ([['%s' !~ '\k']]):format(char))
+  if not ok then
+    return
+  end
+
+  if val ~= 0 then
+    local triggerCharacters = client.server_capabilities.completionProvider.triggerCharacters or {}
+    if not vim.tbl_contains(triggerCharacters, char) then
+      return
+    end
+    triggerKind = lsp.protocol.CompletionTriggerKind.TriggerCharacter
+    triggerChar = char
+  end
+
+  if not context[bufnr] then
+    context_init(bufnr, client.id)
+  end
+  debounce(client, bufnr, triggerKind, triggerChar)
+end
+
+-- Function to trigger autocompletion manually
+local function complete()
+  local bufnr = vim.fn.bufnr()
+  local ctx = context[bufnr]
+  if not ctx then
+    return
+  end
+  local client_id = vim.tbl_get(ctx, 'client_id')
+  if not client_id then
+    return
+  end
+  local client = vim.lsp.get_client_by_id(client_id)
+  if not client then
+    return
+  end
+  call_completion(bufnr, client)
+end
+
 local function auto_complete(client, bufnr)
   au('TextChangedI', {
     group = group,
     buffer = bufnr,
     callback = function(args)
-      if disable or vim.fn.pumvisible() == 1 then
-        disable = false
-        return
-      end
-      local col = vfn.charcol('.')
-      local line = api.nvim_get_current_line()
-      if col == 0 or #line == 0 then
-        return
-      end
-      local triggerKind = lsp.protocol.CompletionTriggerKind.Invoked
-      local triggerChar = ''
-      local char = line:sub(col - 1, col - 1)
-      local ok, val = pcall(api.nvim_eval, ([['%s' !~ '\k']]):format(char))
-      if not ok then
-        return
-      end
-
-      if val ~= 0 then
-        local triggerCharacters = client.server_capabilities.completionProvider.triggerCharacters
-          or {}
-        if not vim.tbl_contains(triggerCharacters, char) then
-          return
-        end
-        triggerKind = lsp.protocol.CompletionTriggerKind.TriggerCharacter
-        triggerChar = char
-      end
-      if not context[args.buf] then
-        context_init(args.buf, client.id)
-      end
-      debounce(client, args.buf, triggerKind, triggerChar)
+      call_completion(args.buf, client)
     end,
   })
 end
@@ -636,4 +659,5 @@ return {
   setup = setup,
   register_cap = register_cap,
   disable_trigger = disable_trigger,
+  complete = complete,
 }
